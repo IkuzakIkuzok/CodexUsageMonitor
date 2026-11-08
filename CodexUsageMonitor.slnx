@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="CodexUsageMonitor.Core/CodexUsageMonitor.Core.csproj" />
+  <Project Path="CodexUsageMonitor.Tests.FakeServer/CodexUsageMonitor.Tests.FakeServer.csproj" />
+  <Project Path="CodexUsageMonitor.Tests/CodexUsageMonitor.Tests.csproj" />
+  <Project Path="CodexUsageMonitor/CodexUsageMonitor.csproj" />
+</Solution>

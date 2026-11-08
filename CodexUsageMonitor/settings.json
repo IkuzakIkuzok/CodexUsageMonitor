@@ -1,0 +1,10 @@
+{
+  "refreshIntervalSeconds": 30,
+  "iconStates": {
+    "normal": { "color": "#168C4C" },
+    "elevated": { "thresholdPercent": 50, "color": "#CA9100" },
+    "high": { "thresholdPercent": 80, "color": "#E86C0C" },
+    "critical": { "thresholdPercent": 95, "color": "#CC3030" }
+  },
+  "notificationThresholdsPercent": [50, 80, 95]
+}

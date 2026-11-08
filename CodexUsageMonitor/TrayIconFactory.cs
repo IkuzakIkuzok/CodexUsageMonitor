@@ -6,7 +6,7 @@ using CodexUsageMonitor.Core.Presentation;
 namespace CodexUsageMonitor;
 
 /// <summary>Draws split circular usage icons and manages temporary native icon handles.</summary>
-internal static class TrayIconFactory
+internal static partial class TrayIconFactory
 {
     /// <summary>Creates a 32-pixel icon with primary quota on the left and secondary quota on the right.</summary>
     /// <param name="appearance">The independent severity and remaining percentage for each half.</param>
@@ -133,7 +133,7 @@ internal static class TrayIconFactory
     /// <summary>Releases the native icon handle created from the temporary bitmap.</summary>
     /// <param name="handle">The native icon handle to destroy.</param>
     /// <returns>Whether the native handle was successfully destroyed.</returns>
-    [DllImport("user32.dll", SetLastError = true)]
+    [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DestroyIcon(IntPtr handle);
+    private static partial bool DestroyIcon(IntPtr handle);
 }

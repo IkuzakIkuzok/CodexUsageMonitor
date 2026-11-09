@@ -8,6 +8,9 @@ namespace CodexUsageMonitor.Tests;
 
 public sealed class ThresholdTests
 {
+    private const long ResetTime = 1800000000;
+    private const long ReadingTime = ResetTime - 60;
+
     [Fact]
     public void ReachingThresholdExactlyAlertsOnceForRepeatedAndHigherReadings()
     {
@@ -84,9 +87,87 @@ public sealed class ThresholdTests
     public void NewQuotaWindowRearmsEvenIfFirstReadingIsAlreadyHigh()
     {
         var monitor = new UsageThresholdMonitor([80]);
-        monitor.Observe(Snapshot(90, resetsAt: 1800000000));
-        Assert.Single(monitor.Observe(Snapshot(90, resetsAt: 1800003600)));
-        Assert.Empty(monitor.Observe(Snapshot(90, resetsAt: 1800003600)));
+        monitor.Observe(Snapshot(90));
+        Assert.Single(monitor.Observe(Snapshot(90, resetsAt: ResetTime + 18000, retrievedAt: ResetTime)));
+        Assert.Empty(monitor.Observe(Snapshot(90, resetsAt: ResetTime + 18000, retrievedAt: ResetTime + 30)));
+    }
+
+    [Fact]
+    public void ResetTimeChangesBeforeTheDeadlineDoNotRepeatAlerts()
+    {
+        var monitor = new UsageThresholdMonitor([50, 80]);
+        Assert.Equal([50], Assert.Single(monitor.Observe(Snapshot(60))).ThresholdsPercent);
+
+        foreach (var offset in new[] { 1, -1, 30, 0, 3600, -3600, 0 })
+        {
+            Assert.Empty(monitor.Observe(Snapshot(60, resetsAt: ResetTime + offset)));
+        }
+        Assert.Equal([80], Assert.Single(monitor.Observe(Snapshot(85))).ThresholdsPercent);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(long.MinValue)]
+    [InlineData(long.MaxValue)]
+    public void InvalidResetMetadataDoesNotRepeatAlertsOrLoseTheKnownDeadline(long invalid)
+    {
+        var monitor = new UsageThresholdMonitor([50]);
+        monitor.Observe(Snapshot(60));
+        Assert.Empty(monitor.Observe(Snapshot(60, resetsAt: invalid)));
+        Assert.Empty(monitor.Observe(Snapshot(60)));
+        Assert.Single(monitor.Observe(Snapshot(60, resetsAt: ResetTime + 18000, retrievedAt: ResetTime)));
+    }
+
+    [Fact]
+    public void DurationChangesAloneDoNotRepeatAlerts()
+    {
+        var monitor = new UsageThresholdMonitor([50]);
+        monitor.Observe(Snapshot(60));
+        foreach (var duration in new long?[] { 301, 0, -1, null, 300 })
+        {
+            Assert.Empty(monitor.Observe(Snapshot(60, durationMins: duration)));
+        }
+    }
+
+    [Fact]
+    public void ExpiredResetTimesAndStaleMetadataDoNotRepeatAlerts()
+    {
+        var monitor = new UsageThresholdMonitor([50]);
+        monitor.Observe(Snapshot(60));
+        Assert.Empty(monitor.Observe(Snapshot(60, retrievedAt: ResetTime + 30)));
+        Assert.Empty(monitor.Observe(Snapshot(60, resetsAt: ResetTime + 10, retrievedAt: ResetTime + 30)));
+        Assert.Single(monitor.Observe(Snapshot(60, resetsAt: ResetTime + 18000, retrievedAt: ResetTime + 60)));
+
+        // An older deadline must not replace the new deadline and rearm the same window.
+        Assert.Empty(monitor.Observe(Snapshot(60, retrievedAt: ResetTime + 90)));
+        Assert.Empty(monitor.Observe(Snapshot(60, resetsAt: ResetTime + 18000, retrievedAt: ResetTime + 120)));
+    }
+
+    [Fact]
+    public void ResettingOneWindowDoesNotRepeatTheOtherWindowsAlert()
+    {
+        var monitor = new UsageThresholdMonitor([50]);
+        monitor.Observe(Snapshot(60, 60));
+        var next = Snapshot(60, 60, retrievedAt: ResetTime) with
+        {
+            Usage = new(new(Primary: new(60, 300, ResetTime + 18000),
+                Secondary: new(60, 10080, ResetTime)), AccountId: "account")
+        };
+        Assert.Equal("Primary", Assert.Single(monitor.Observe(next)).WindowName);
+        Assert.Empty(monitor.Observe(next));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void UnknownAccountIdsDoNotRearmThresholds(string? unknown)
+    {
+        var monitor = new UsageThresholdMonitor([50]);
+        monitor.Observe(Snapshot(60));
+        Assert.Empty(monitor.Observe(Snapshot(60, accountId: unknown)));
+        Assert.Empty(monitor.Observe(Snapshot(60)));
     }
 
     [Fact]
@@ -139,7 +220,8 @@ public sealed class ThresholdTests
     }
 
     private static UsageSnapshot Snapshot(double? primary, double? secondary = null,
-        long? resetsAt = 1800000000, string? accountId = "account") => new(DateTimeOffset.UtcNow,
-        new(new(Primary: primary is { } p ? new(p, 300, resetsAt) : null,
+        long? resetsAt = ResetTime, string? accountId = "account", long retrievedAt = ReadingTime,
+        long? durationMins = 300) => new(DateTimeOffset.FromUnixTimeSeconds(retrievedAt),
+        new(new(Primary: primary is { } p ? new(p, durationMins, resetsAt) : null,
                 Secondary: secondary is { } s ? new(s, 10080, resetsAt) : null), AccountId: accountId));
 }

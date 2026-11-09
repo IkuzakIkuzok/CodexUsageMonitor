@@ -19,14 +19,15 @@ public sealed class UsageThresholdMonitor(IEnumerable<int> thresholds)
     /// <returns>One alert per window with crossings, or an empty array when no thresholds are newly reached.</returns>
     /// <remarks>
     /// The first valid reading reports thresholds already reached. Falling below a threshold, a new
-    /// quota window, or a known account change permits another alert. Missing or invalid readings
-    /// preserve the previous window state.
+    /// quota window, or a known account change permits another alert. A new window requires the
+    /// known reset deadline to have elapsed and a later, future reset time. Metadata changes alone
+    /// do not rearm alerts. Missing or invalid readings preserve the previous window state.
     /// </remarks>
     public ImmutableArray<UsageThresholdAlert> Observe(UsageSnapshot snapshot)
     {
         if (this.thresholds.IsEmpty) { return []; }
 
-        if (snapshot.Usage.AccountId is { } currentAccountId)
+        if (snapshot.Usage.AccountId is { } currentAccountId && !string.IsNullOrWhiteSpace(currentAccountId))
         {
             if (this.accountId is not null && this.accountId != currentAccountId)
             {
@@ -50,18 +51,27 @@ public sealed class UsageThresholdMonitor(IEnumerable<int> thresholds)
 
             var key = (id, windowName);
             this.previousWindows.TryGetValue(key, out var previous);
+            var reset = window.ResetsAt is > 0 && window.ResetsAt <= DateTimeOffset.MaxValue.ToUnixTimeSeconds()
+                ? window.ResetsAt : null;
+            var readingTime = snapshot.RetrievedAt.ToUnixTimeSeconds();
+
+            // Reset times are metadata, not stable window identifiers. Corrections or rounding
+            // while a quota is active must not replay every threshold already reached.
+            // A due deadline alone is also insufficient when the server still returns old data.
             var newWindow = previous is null
-                || (previous.ResetsAt is { } previousReset && window.ResetsAt is { } reset && previousReset != reset)
-                || (previous.WindowDurationMins is { } previousDuration
-                    && window.WindowDurationMins is { } duration && previousDuration != duration);
+                || (previous.ResetsAt is { } previousReset && reset is { } nextReset
+                    && previousReset <= readingTime && nextReset > readingTime);
 
             var crossed = this.thresholds.Where(threshold => window.UsedPercent >= threshold
                 && (newWindow || previous!.UsedPercent < threshold)).ToImmutableArray();
 
-            // Keep known window metadata when the server temporarily omits it.
+            // Keep the latest known valid deadline. Missing, invalid, or older metadata must
+            // not rewind it and make a subsequent reading look like another rollover.
+            // Duration changes alone do not establish that quota has been reset.
             this.previousWindows[key] = window with
             {
-                ResetsAt = window.ResetsAt ?? previous?.ResetsAt,
+                ResetsAt = reset is { } validReset
+                    ? Math.Max(validReset, previous?.ResetsAt ?? validReset) : previous?.ResetsAt,
                 WindowDurationMins = window.WindowDurationMins ?? previous?.WindowDurationMins
             };
             if (!crossed.IsEmpty)
